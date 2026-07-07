@@ -1,6 +1,7 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import gspread
+import json
 from datetime import datetime
 import pandas as pd
 import io
@@ -33,10 +34,13 @@ if cek_login():
     # Menghubungkan gspread secara manual untuk MENULIS (anti-eror)
     def dapatkan_koneksi_gspread():
         # Mengambil data kredensial langsung dari Streamlit Secrets Anda
-        kredensial = st.secrets["connections"]["gsheets"]["service_account"]
+        kredensial_mentah = st.secrets["connections"]["gsheets"]["service_account"]
         spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         
-        gc = gspread.service_account_from_dict(kredensial)
+        # Memaksa teks string dari secrets dikonversi menjadi objek JSON murni (Anti-Eror 'str' object)
+        kredensial_json = json.loads(kredensial_mentah)
+        
+        gc = gspread.service_account_from_dict(kredensial_json)
         sh = gc.open_by_url(spreadsheet_url)
         return sh.get_worksheet(0) # Mengambil sheet pertama (Sheet1)
 
@@ -130,8 +134,8 @@ if cek_login():
                     
                     # Tambahkan baris baru ke paling bawah sheet menggunakan gspread
                     sheet_target.append_row(baris_data)
-                    st.success("Berhasil disimpan ke Google Sheets via Gspread!")
-                    st.toast("Data Sinkron!")
+                    st.success("Berhasil disimpan ke Google Sheets!")
+                    st.toast("Data Tersinkronisasi!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Gagal menulis ke Google Sheets. Eror: {e}")
