@@ -37,63 +37,58 @@ if cek_login():
         hari_inggris = datetime.now().strftime("%A")
         return KAMUS_HARI.get(hari_inggris, hari_inggris)
 
-    # 1. Deteksi Bulan Saat Ini untuk Nama Sheet Otomatis (Format: "July_2026")
-    bulan_sekarang = datetime.now().strftime("%B_%Y")
-    
-    # 2. Ambil Estimasi Saldo Bulan Lalu Berdasarkan Urutan Kronologis (Jika Ada)
-    def hitung_saldo_estafet():
-        saldo_terakhir_bulan_lalu = 0
-        try:
-            df_cek = conn.read(ttl="1s")
-            if not df_cek.empty and "Saldo" in df_cek.columns:
-                df_cek["Saldo"] = pd.to_numeric(df_cek["Saldo"], errors='coerce').fillna(0).astype(int)
-                saldo_terakhir_bulan_lalu = int(df_cek.iloc[-1]["Saldo"])
-        except Exception:
-            pass
-        return saldo_terakhir_bulan_lalu
+    # Ambil Bulan & Tahun Saat Ini untuk Filter Tampilan (Format: "2026-07")
+    bulan_aktif = datetime.now().strftime("%Y-%m")
+    nama_bulan_ini = datetime.now().strftime("%B %Y")
 
-    # 3. Membaca Sheet Bulan Berjalan
+    # Membaca data dari Sheet Utama
     try:
-        df_tampil = conn.read(worksheet=bulan_sekarang, ttl="2s")
-        if df_tampil.empty or "Saldo" not in df_tampil.columns:
-            raise Exception("Sheet Baru")
+        df_master = conn.read(ttl="2s")
+        if df_master.empty or "Saldo" not in df_master.columns:
+            kolom = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
+            df_master = pd.DataFrame(columns=kolom)
     except Exception:
         kolom = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
-        df_tampil = pd.DataFrame(columns=kolom)
+        df_master = pd.DataFrame(columns=kolom)
+
+    # Pastikan tipe data angka benar
+    if not df_master.empty:
+        df_master["Debit"] = pd.to_numeric(df_master["Debit"], errors='coerce').fillna(0).astype(int)
+        df_master["Kredit"] = pd.to_numeric(df_master["Kredit"], errors='coerce').fillna(0).astype(int)
+        df_master["Saldo"] = pd.to_numeric(df_master["Saldo"], errors='coerce').fillna(0).astype(int)
+        saldo_global_terakhir = int(df_master.iloc[-1]["Saldo"])
+    else:
+        saldo_global_terakhir = 0
 
     # ==================== WEB INTERFACE ====================
     st.title("📱 Cashbook Kantor (Cloud)")
-    st.caption(f"📂 Mengakses Tab Bulan: **{bulan_sekarang.replace('_', ' ')}**")
+    st.caption(f"📅 Menampilkan Transaksi Bulan: **{nama_bulan_ini}**")
     st.write("---")
 
-    # Hitung Saldo Akhir, Total Debit, Total Kredit di Sheet Aktif
-    if not df_tampil.empty and "Saldo" in df_tampil.columns:
-        df_tampil["Debit"] = pd.to_numeric(df_tampil["Debit"], errors='coerce').fillna(0).astype(int)
-        df_tampil["Kredit"] = pd.to_numeric(df_tampil["Kredit"], errors='coerce').fillna(0).astype(int)
-        df_tampil["Saldo"] = pd.to_numeric(df_tampil["Saldo"], errors='coerce').fillna(0).astype(int)
-        
-        saldo_sekarang = int(df_tampil.iloc[-1]["Saldo"])
-        total_pengeluaran = int(df_tampil["Debit"].sum())
-        total_pemasukan = int(df_tampil["Kredit"].sum())
+    # Filter data khusus bulan ini saja untuk ditampilkan di layar
+    if not df_master.empty:
+        df_bulan_ini = df_master[df_master["Tanggal"].str.startswith(bulan_aktif, na=False)]
+        total_pengeluaran_bulan_ini = int(df_bulan_ini["Debit"].sum())
+        total_pemasukan_bulan_ini = int(df_bulan_ini["Kredit"].sum())
     else:
-        saldo_sekarang = hitung_saldo_estafet()
-        total_pengeluaran = 0
-        total_pemasukan = 0
+        df_bulan_ini = pd.DataFrame()
+        total_pengeluaran_bulan_ini = 0
+        total_pemasukan_bulan_ini = 0
 
-    # Tampilan Ringkasan Utama
-    st.metric(label="Sisa Saldo Saat Ini", value=f"Rp {saldo_sekarang:,}")
+    # Tampilan Ringkasan Berdasarkan Saldo Kumulatif
+    st.metric(label="Sisa Saldo Kas Saat Ini (Estafet Toko)", value=f"Rp {saldo_global_terakhir:,}")
     
     col_met1, col_met2 = st.columns(2)
-    col_met1.metric(label="Total Keluar Bulan Ini", value=f"Rp {total_pengeluaran:,}")
-    col_met2.metric(label="Total Masuk Bulan Ini", value=f"Rp {total_pemasukan:,}")
+    col_met1.metric(label="Pengeluaran Bulan Ini", value=f"Rp {total_pengeluaran_bulan_ini:,}")
+    col_met2.metric(label="Pemasukan Bulan Ini", value=f"Rp {total_pemasukan_bulan_ini:,}")
 
     st.write("---")
     
     # Form Input Transaksi Harian
-    with st.form("form_transaksi_sheets", clear_on_submit=True):
+    with st.form("form_transaksi_master", clear_on_submit=True):
         st.subheader("📝 Catat Transaksi Baru")
         deskripsi = st.text_input("Deskripsi / Keperluan:")
-        tipe = st.selectbox("Jenis Transaksi:", options=["Kredit (Pemasukan / Tambah Saldo)", "Debit (Pengeluaran)"])
+        tipe = st.selectbox("Jenis Transaksi:", options=["Kredit (Pemasukan / Uang Masuk)", "Debit (Pengeluaran)"])
         jumlah = st.number_input("Jumlah Uang (Rp):", min_value=0, value=0, step=5000)
         cb_nota = st.checkbox("Ada Bukti Nota Fisik")
         
@@ -103,7 +98,8 @@ if cek_login():
                 debit = jumlah if "Debit" in tipe else 0
                 kredit = jumlah if "Kredit" in tipe else 0
                 
-                saldo_baru = (saldo_sekarang - debit) if debit > 0 else (saldo_sekarang + kredit)
+                # Menghitung saldo estafet otomatis berdasarkan baris terakhir di Google Sheets
+                saldo_baru = (saldo_global_terakhir - debit) if debit > 0 else (saldo_global_terakhir + kredit)
                 
                 baris_baru = pd.DataFrame([{
                     "Tanggal": datetime.now().strftime("%Y-%m-%d"),
@@ -115,69 +111,70 @@ if cek_login():
                     "Saldo": int(saldo_baru)
                 }])
                 
-                if df_tampil.empty:
+                if df_master.empty:
                     df_gabung = baris_baru
                 else:
-                    df_gabung = pd.concat([df_tampil, baris_baru], ignore_index=True)
+                    df_gabung = pd.concat([df_master, baris_baru], ignore_index=True)
                     
-                conn.update(worksheet=bulan_sekarang, data=df_gabung)
-                st.success(f"Berhasil disimpan!")
+                conn.update(data=df_gabung)
+                st.success("Berhasil disimpan ke Google Sheets!")
                 st.rerun()
             else:
                 st.warning("⚠️ Mohon isi deskripsi dan nominal uang dengan benar!")
 
-    # ==================== FITUR REKAP & DOWNLOAD ====================
-    if not df_tampil.empty:
-        st.write("---")
-        st.subheader("📥 Fitur Download Laporan")
-        sheet_target = st.text_input("Ketik nama file/bulan yang ingin diunduh:", value=bulan_sekarang)
+    # ==================== FITUR DOWNLOAD LAPORAN ====================
+    st.write("---")
+    st.subheader("📥 Fitur Download Laporan")
+    
+    # Memilih bulan yang ingin diekspor dari data yang ada
+    if not df_master.empty:
+        df_master["TahunBulan"] = df_master["Tanggal"].str.slice(0, 7)
+        pilihan_bulan = df_master["TahunBulan"].unique().tolist()
+        bulan_pilihan = st.selectbox("Pilih bulan laporan yang ingin diunduh:", options=pilihan_bulan)
         
         if st.button("🔍 Siapkan File Excel untuk Diunduh", use_container_width=True):
-            try:
-                df_download = conn.read(worksheet=sheet_target, ttl="1s")
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_download.to_excel(writer, index=False, sheet_name=sheet_target)
-                    
-                st.download_button(
-                    label=f"📥 KLIK DI SINI UNTUK UNDUH FILE ({sheet_target}.xlsx)",
-                    data=buffer.getvalue(),
-                    file_name=f"Laporan_Cashbook_{sheet_target}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            except Exception:
-                st.error(f"❌ Tab '{sheet_target}' tidak ditemukan!")
+            df_download = df_master[df_master["Tanggal"].str.startswith(bulan_pilihan, na=False)].drop(columns=["TahunBulan"])
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_download.to_excel(writer, index=False, sheet_name=f"Rekap_{bulan_pilihan}")
+                
+            st.download_button(
+                label=f"📥 KLIK DI SINI UNTUK UNDUH FILE ({bulan_pilihan}.xlsx)",
+                data=buffer.getvalue(),
+                file_name=f"Laporan_Cashbook_{bulan_pilihan}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
-        # ==================== FITUR KENDALI DATA (RESET & DELETE) ====================
+    # ==================== FITUR RESET & DELETE (ZONA UJI COBA) ====================
+    if not df_master.empty:
         st.write("---")
         st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
         
         if st.button("⚠️ Hapus Baris Transaksi Terakhir", use_container_width=True):
-            df_kurang = df_tampil.drop(df_tampil.index[-1])
-            conn.update(worksheet=bulan_sekarang, data=df_kurang)
+            df_kurang = df_master.drop(df_master.index[-1])
+            conn.update(data=df_kurang)
             st.success("Baris terakhir berhasil dihapus!")
             st.rerun()
             
-        # TOMBOL RESET DARI AWAL UNTUK MASA UJI COBA
         st.write("")
-        konfirmasi_reset = st.checkbox("Saya benar-benar ingin mengosongkan aplikasi untuk bulan ini")
-        if st.button("🚨 RESET TOTAL DATA BULAN INI", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
-            # Membuat dataframe kosong baru untuk menimpa data asal-asalan
+        konfirmasi_reset = st.checkbox("Saya ingin menghapus SELURUH DATA untuk memulai dari awal lagi")
+        if st.button("🚨 RESET TOTAL SEMUA DATA", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
             kolom_kosong = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
             df_kosong = pd.DataFrame(columns=kolom_kosong)
-            conn.update(worksheet=bulan_sekarang, data=df_kosong)
-            st.success("Sistem Berhasil Direset! Mengulai Kembali dari Rp 0...")
+            conn.update(data=df_kosong)
+            st.success("Sistem Berhasil Direset ke Nol! Semua riwayat uji coba dihapus.")
             st.rerun()
 
-        # Tampilkan Riwayat jika data bulan ini ada
-        st.write("---")
-        st.subheader("📜 Riwayat Transaksi Bulan Ini")
-        for index, row in df_tampil.iloc[::-1].iterrows():
-            with st.container():
-                warna = "🔴" if int(row['Debit']) > 0 else "🟢"
-                nominal = row['Debit'] if int(row['Debit']) > 0 else row['Kredit']
-                st.markdown(f"**{warna} {row['Deskripsi']}**")
-                st.caption(f"📅 {row['Tanggal']} ({row['Hari']}) | Nota: {row['Nota']}")
-                st.markdown(f"Nominal: **Rp {int(nominal):,}** | Sisa Kas: *Rp {int(row['Saldo']):,}*")
-                st.write("---")
+        # Tampilkan Riwayat Transaksi khusus bulan aktif ini saja
+        if not df_bulan_ini.empty:
+            st.write("---")
+            st.subheader("📜 Riwayat Transaksi Bulan Ini")
+            for index, row in df_bulan_ini.iloc[::-1].iterrows():
+                with st.container():
+                    warna = "🔴" if int(row['Debit']) > 0 else "🟢"
+                    nominal = row['Debit'] if int(row['Debit']) > 0 else row['Kredit']
+                    st.markdown(f"**{warna} {row['Deskripsi']}**")
+                    st.caption(f"📅 {row['Tanggal']} ({row['Hari']}) | Nota: {row['Nota']}")
+                    st.markdown(f"Nominal: **Rp {int(nominal):,}** | Sisa Kas: *Rp {int(row['Saldo']):,}*")
+                    st.write("---")
