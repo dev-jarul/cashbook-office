@@ -34,16 +34,11 @@ if cek_login():
         try:
             kredensial_mentah = st.secrets["connections"]["gsheets"]["service_account"]
             spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-            
-            # Membaca JSON rahasia dengan mode fleksibel (mengabaikan karakter enter/control yang rusak)
             kredensial_json = json.loads(kredensial_mentah, strict=False)
             
             gc = gspread.service_account_from_dict(kredensial_json)
             sh = gc.open_by_url(spreadsheet_url)
             return sh.get_worksheet(0)
-        except gspread.exceptions.SpreadsheetNotFound:
-            st.error("❌ Eror 404: Link Google Sheets tidak ditemukan! Periksa kembali URL spreadsheet di Streamlit Secrets Anda.")
-            st.stop()
         except Exception as e:
             st.error(f"❌ Masalah Koneksi: {e}")
             st.stop()
@@ -60,18 +55,22 @@ if cek_login():
     bulan_aktif = datetime.now().strftime("%Y-%m")
     nama_bulan_ini = datetime.now().strftime("%B %Y")
 
-    # Membaca data dari Google Sheets
+    # Ambil data terbaru langsung lewat gspread bypass cache (Garansi Data Segar)
     try:
-        df_master = conn.read(ttl="2s")
-        if df_master.empty or "Saldo" not in df_master.columns:
-            kolom = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
-            df_master = pd.DataFrame(columns=kolom)
+        sheet_target = dapatkan_koneksi_gspread()
+        semua_data = sheet_target.get_all_records()
+        
+        if len(semua_data) == 0:
+            df_master = pd.DataFrame(columns=["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
+        else:
+            df_master = pd.DataFrame(semua_data)
+            # Buang baris yang tidak sengaja berisi judul duplikat agar tidak merusak grafik/hitungan
+            df_master = df_master[df_master["Tanggal"] != "Tanggal"]
     except Exception:
-        kolom = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
-        df_master = pd.DataFrame(columns=kolom)
+        df_master = pd.DataFrame(columns=["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
 
-    # Pastikan tipe data angka benar
-    if not df_master.empty:
+    # Pastikan tipe data angka murni, buang teks yang nyasar
+    if not df_master.empty and "Saldo" in df_master.columns:
         df_master["Debit"] = pd.to_numeric(df_master["Debit"], errors='coerce').fillna(0).astype(int)
         df_master["Kredit"] = pd.to_numeric(df_master["Kredit"], errors='coerce').fillna(0).astype(int)
         df_master["Saldo"] = pd.to_numeric(df_master["Saldo"], errors='coerce').fillna(0).astype(int)
@@ -84,9 +83,9 @@ if cek_login():
     st.caption(f"📅 Menampilkan Transaksi Bulan: **{nama_bulan_ini}**")
     st.write("---")
 
-    # Filter data khusus bulan ini saja untuk tampilan
+    # Filter data khusus bulan ini saja untuk tampilan riwayat
     if not df_master.empty:
-        df_bulan_ini = df_master[df_master["Tanggal"].str.startswith(bulan_aktif, na=False)]
+        df_bulan_ini = df_master[df_master["Tanggal"].astype(str).str.startswith(bulan_aktif, na=False)]
         total_pengeluaran_bulan_ini = int(df_bulan_ini["Debit"].sum())
         total_pemasukan_bulan_ini = int(df_bulan_ini["Kredit"].sum())
     else:
@@ -131,7 +130,8 @@ if cek_login():
                 
                 try:
                     sheet_target = dapatkan_koneksi_gspread()
-                    if df_master.empty:
+                    # Cek total baris fisik untuk memastikan kapan harus nulis Header awal
+                    if len(sheet_target.get_all_values()) == 0:
                         sheet_target.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
                     
                     sheet_target.append_row(baris_data)
@@ -147,23 +147,27 @@ if cek_login():
     if not df_master.empty:
         st.write("---")
         st.subheader("📥 Fitur Download Laporan")
-        df_master["TahunBulan"] = df_master["Tanggal"].str.slice(0, 7)
+        df_master["TahunBulan"] = df_master["Tanggal"].astype(str).str.slice(0, 7)
         pilihan_bulan = df_master["TahunBulan"].unique().tolist()
-        bulan_pilihan = st.selectbox("Pilih bulan laporan yang ingin diunduh:", options=pilihan_bulan)
+        # Bersihkan jika ada teks usil yang masuk ke list dropdown pilihan bulan
+        pilihan_bulan = [b for b in pilihan_bulan if b and "-" in str(b)]
         
-        if st.button("🔍 Siapkan File Excel untuk Diunduh", use_container_width=True):
-            df_download = df_master[df_master["Tanggal"].str.startswith(bulan_pilihan, na=False)].drop(columns=["TahunBulan"])
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_download.to_excel(writer, index=False, sheet_name=f"Rekap_{bulan_pilihan}")
-                
-            st.download_button(
-                label=f"📥 KLIK DI SINI UNTUK UNDUH FILE ({bulan_pilihan}.xlsx)",
-                data=buffer.getvalue(),
-                file_name=f"Laporan_Cashbook_{bulan_pilihan}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+        if pilihan_bulan:
+            bulan_pilihan = st.selectbox("Pilih bulan laporan yang ingin diunduh:", options=pilihan_bulan)
+            
+            if st.button("🔍 Siapkan File Excel untuk Diunduh", use_container_width=True):
+                df_download = df_master[df_master["Tanggal"].astype(str).str.startswith(bulan_pilihan, na=False)].drop(columns=["TahunBulan"], errors='ignore')
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_download.to_excel(writer, index=False, sheet_name=f"Rekap_{bulan_pilihan}")
+                    
+                st.download_button(
+                    label=f"📥 KLIK DI SINI UNTUK UNDUH FILE ({bulan_pilihan}.xlsx)",
+                    data=buffer.getvalue(),
+                    file_name=f"Laporan_Cashbook_{bulan_pilihan}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
 
     # ==================== FITUR RESET (ZONA UJI COBA) ====================
     if not df_master.empty:
