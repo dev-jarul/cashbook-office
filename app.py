@@ -179,7 +179,6 @@ if cek_login():
         df_tampil["Kredit"] = df_tampil["Kredit"].apply(lambda x: f"Rp {x:,}")
         df_tampil["Saldo"] = df_tampil["Saldo"].apply(lambda x: f"Rp {x:,}")
         
-        # Logika CSS untuk meratakan seluruh kolom ke tengah
         st.markdown(
             """
             <style>
@@ -190,7 +189,6 @@ if cek_login():
             unsafe_allow_html=True
         )
         
-        # Menampilkan dataframe statis yang bersih dan rapi di layar HP
         st.dataframe(df_tampil, use_container_width=True, hide_index=True)
 
         # ==================== FITUR DOWNLOAD PER TAB BULANAN ====================
@@ -210,7 +208,7 @@ if cek_login():
                 use_container_width=True
             )
 
-    # ==================== FITUR RESET (ZONA UJI COBA GLOBAL) ====================
+    # ==================== FITUR RESET TOTAL (HAPUS DATA & HAPUS SHEET) ====================
     st.write("---")
     st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
     
@@ -219,7 +217,7 @@ if cek_login():
         if st.button(f"⚠️ Hapus 1 Baris Transaksi Terakhir di Tab {sheet_aktif}", use_container_width=True):
             try:
                 total_baris_fisik = len(ws_aktif.get_all_values())
-                if total_baris_fisik > 1: # Pastikan tidak menghapus baris judul (header)
+                if total_baris_fisik > 1:
                     ws_aktif.delete_rows(total_baris_fisik)
                     st.success("Baris terakhir di tab ini berhasil dihapus!")
                     st.rerun()
@@ -229,14 +227,24 @@ if cek_login():
                 st.error(f"Gagal menghapus baris: {e}")
                 
     st.write("")
-    konfirmasi_reset = st.checkbox("Saya mengerti dan ingin mengosongkan SELURUH DATA DI SEMUA SHEET secara total")
-    if st.button("🚨 RESET TOTAL SEMUA DATA (SELURUH SHEET)", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
+    konfirmasi_reset = st.checkbox("Saya ingin MENGHAPUS SEMUA DATA dan SEMUA TAB BULANAN secara permanen")
+    if st.button("🚨 WIPE OUT: HAPUS SEMUA DATA & SEMUA SHEET", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
         try:
-            # Melakukan perulangan (looping) ke semua sheet yang ada di Google Sheets
+            # 1. Buat dulu satu sheet baru yang steril sebagai jangkar sementara
+            sheet_sementara = f"Mulai_Baru_{rekomendasi_sheet_baru}"
+            ws_baru = sh.add_worksheet(title=sheet_sementara, rows="1000", cols="20")
+            ws_baru.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
+            ws_baru.append_row([datetime.now().strftime("%Y-%m-%d"), ambil_hari_ini(), "Sistem Direset Total", "-", 0, 0, 0])
+            
+            # 2. Hapus seluruh sheet lama yang menumpuk satu per satu
             for ws in sh.worksheets():
-                ws.clear() # Kosongkan isi sheet sepenuhnya
-                ws.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]) # Tulis ulang header
-            st.success("💥 Sukses! Seluruh data di semua sheet telah dihapus dan dibersihkan kembali ke nol!")
+                if ws.title != sheet_sementara:
+                    sh.del_worksheet(ws)
+            
+            # 3. Ubah nama sheet jangkar sementara tadi menjadi nama bulan bersih yang elegan
+            ws_baru.update_title(rekomendasi_sheet_baru)
+            
+            st.success("💥 BERHASIL! Semua tab lama dibuang total dan sistem kembali bersih dari nol!")
             st.rerun()
         except Exception as e:
-            st.error(f"Gagal melakukan reset multi-sheet: {e}")
+            st.error(f"Gagal melakukan pembersihan total sheet: {e}")
