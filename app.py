@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 import pandas as pd
 import io
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
 # --- KONFIGURASI HALAMAN WEB ---
 st.set_page_config(page_title="Office Cashbook Cloud", page_icon="📱", layout="centered")
@@ -43,11 +45,7 @@ if cek_login():
     # ==================== FUNGSI OTOMATISASI VISUAL SHEETS ====================
     def perbarui_desain_visual_sheet(ws):
         try:
-            # 1. Mengatur Lebar Kolom Otomatis (Auto-fit Columns)
-            # Kolom A-G (1 sampai 7). Kolom C adalah Deskripsi yang akan melebar otomatis.
             ws.columns_auto_resize(1, 7)
-            
-            # 2. Desain Header & Efek Zebra Menggunakan Batch Formatting (Lebih Cepat)
             total_baris = len(ws.get_all_values())
             if total_baris == 0:
                 return
@@ -60,7 +58,7 @@ if cek_login():
                     "range": {"sheetId": ws.id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 7},
                     "cell": {
                         "userEnteredFormat": {
-                            "backgroundColor": {"red": 0.1, "green": 0.4, "blue": 0.8}, # Warna Biru
+                            "backgroundColor": {"red": 0.1, "green": 0.4, "blue": 0.8},
                             "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True},
                             "horizontalAlignment": "CENTER"
                         }
@@ -69,11 +67,9 @@ if cek_login():
                 }
             })
             
-            # Format Efek Zebra untuk Baris Data (Baris 2 dan seterusnya)
+            # Format Efek Zebra untuk Baris Data
             for i in range(1, total_baris):
-                # Baris genap diberi warna biru muda transparan, baris ganjil tetap putih bersih
                 warna_latar = {"red": 0.92, "green": 0.96, "blue": 1.0} if i % 2 == 1 else {"red": 1.0, "green": 1.0, "blue": 1.0}
-                
                 requests.append({
                     "repeatCell": {
                         "range": {"sheetId": ws.id, "startRowIndex": i, "endRowIndex": i + 1, "startColumnIndex": 0, "endColumnIndex": 7},
@@ -87,10 +83,9 @@ if cek_login():
                     }
                 })
             
-            # Tembakkan semua perubahan desain ke Google Sheets sekaligus
             ws.spreadsheet.batch_update({"requests": requests})
         except Exception:
-            pass # Mengabaikan jika terjadi kegagalan kosmetik agar aplikasi tidak macet
+            pass
 
     KAMUS_HARI = {
         "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
@@ -170,10 +165,7 @@ if cek_login():
                         int(saldo_terakhir_aktif)
                     ]
                     ws_baru.append_row(baris_awal)
-                    
-                    # Berikan sentuhan desain visual instan pada sheet baru
                     perbarui_desain_visual_sheet(ws_baru)
-                    
                     st.success(f"🎉 Tab '{nama_baru}' berhasil dibuat dengan saldo awal Rp {saldo_terakhir_aktif:,}!")
                     st.rerun()
                 except Exception as e:
@@ -209,10 +201,7 @@ if cek_login():
                 
                 try:
                     ws_aktif.append_row(baris_data)
-                    
-                    # Jalankan dekorasi visual otomatis (Zebra effect + auto column width)
                     perbarui_desain_visual_sheet(ws_aktif)
-                    
                     st.success(f"Berhasil disimpan ke Tab {sheet_aktif}!")
                     st.rerun()
                 except Exception as e:
@@ -242,15 +231,55 @@ if cek_login():
         
         st.dataframe(df_tampil, use_container_width=True, hide_index=True)
 
-        # ==================== FITUR DOWNLOAD PER TAB BULANAN ====================
+        # ==================== FITUR DOWNLOAD SINKRON VISUAL EXCEL ====================
         st.write("---")
         st.subheader("📥 Download File Excel Tab Ini")
         
         if st.button("🔍 Siapkan File Excel untuk Diunduh", use_container_width=True):
             buffer = io.BytesIO()
+            
+            # Buat file excel mentah terlebih dahulu
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_master.to_excel(writer, index=False, sheet_name=sheet_aktif)
                 
+                # Mengambil objek lembar kerja aktif dari openpyxl untuk mendesain file download
+                workbook = writer.book
+                worksheet = workbook[sheet_aktif]
+                
+                # Definisikan warna kosmetik yang persis dengan Google Sheets Anda
+                warna_header = PatternFill(start_color="1A66CC", end_color="1A66CC", fill_type="solid") # Biru Tua
+                warna_zebra = PatternFill(start_color="EBF5FF", end_color="EBF5FF", fill_type="solid")  # Biru Muda Transparan
+                teks_putih = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+                teks_biasa = Font(name="Calibri", size=11, bold=False, color="000000")
+                rata_tengah = Alignment(horizontal="center", vertical="center")
+                
+                # 1. Hias Bagian Header (Baris ke-1)
+                for cell in worksheet[1]:
+                    cell.fill = warna_header
+                    cell.font = teks_putih
+                    cell.alignment = rata_tengah
+                
+                # 2. Hias Efek Zebra & Rata Tengah Data (Baris ke-2 dst)
+                for row_idx in range(2, worksheet.max_row + 1):
+                    for col_idx in range(1, worksheet.max_column + 1):
+                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                        cell.font = teks_biasa
+                        cell.alignment = rata_tengah
+                        
+                        # Efek Zebra: Baris genap di Excel (indeks ganjil di perhitungan) diberi latar biru muda
+                        if row_idx % 2 == 1:
+                            cell.fill = warna_zebra
+                
+                # 3. Otomatisasi Lebar Kolom (Auto-fit Columns) agar Deskripsi Mengikuti Panjang Teks
+                for col in worksheet.columns:
+                    max_len = 0
+                    col_letter = get_column_letter(col[0].column)
+                    for cell in col:
+                        if cell.value is not None:
+                            max_len = max(max_len, len(str(cell.value)))
+                    # Atur lebar kolom dengan toleransi ruang spasi tambahan (+4)
+                    worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
+            
             st.download_button(
                 label=f"📥 KLIK UNTUK UNDUH FILE ({sheet_aktif}.xlsx)",
                 data=buffer.getvalue(),
@@ -269,10 +298,7 @@ if cek_login():
                 total_baris_fisik = len(ws_aktif.get_all_values())
                 if total_baris_fisik > 1:
                     ws_aktif.delete_rows(total_baris_fisik)
-                    
-                    # Susun kembali format zebra setelah baris dihapus
                     perbarui_desain_visual_sheet(ws_aktif)
-                    
                     st.success("Baris terakhir di tab ini berhasil dihapus!")
                     st.rerun()
                 else:
@@ -294,8 +320,6 @@ if cek_login():
                     sh.del_worksheet(ws)
             
             ws_baru.update_title(rekomendasi_sheet_baru)
-            
-            # Berikan desain visual biru zebra pada sheet hasil reset total
             perbarui_desain_visual_sheet(ws_baru)
             
             st.success("💥 BERHASIL! Semua tab lama dibuang total dan sistem kembali bersih dari nol dengan desain baru!")
