@@ -209,3 +209,34 @@ if cek_login():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
+
+    # ==================== FITUR RESET (ZONA UJI COBA GLOBAL) ====================
+    st.write("---")
+    st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
+    
+    # Fitur Hapus Baris Terakhir pada Tab Terpilih
+    if not df_master.empty:
+        if st.button(f"⚠️ Hapus 1 Baris Transaksi Terakhir di Tab {sheet_aktif}", use_container_width=True):
+            try:
+                total_baris_fisik = len(ws_aktif.get_all_values())
+                if total_baris_fisik > 1: # Pastikan tidak menghapus baris judul (header)
+                    ws_aktif.delete_rows(total_baris_fisik)
+                    st.success("Baris terakhir di tab ini berhasil dihapus!")
+                    st.rerun()
+                else:
+                    st.warning("Tab sudah kosong, tidak ada data transaksi yang bisa dihapus.")
+            except Exception as e:
+                st.error(f"Gagal menghapus baris: {e}")
+                
+    st.write("")
+    konfirmasi_reset = st.checkbox("Saya mengerti dan ingin mengosongkan SELURUH DATA DI SEMUA SHEET secara total")
+    if st.button("🚨 RESET TOTAL SEMUA DATA (SELURUH SHEET)", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
+        try:
+            # Melakukan perulangan (looping) ke semua sheet yang ada di Google Sheets
+            for ws in sh.worksheets():
+                ws.clear() # Kosongkan isi sheet sepenuhnya
+                ws.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]) # Tulis ulang header
+            st.success("💥 Sukses! Seluruh data di semua sheet telah dihapus dan dibersihkan kembali ke nol!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Gagal melakukan reset multi-sheet: {e}")
