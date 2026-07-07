@@ -40,6 +40,58 @@ if cek_login():
             st.error(f"❌ Masalah Koneksi Google Sheets: {e}")
             st.stop()
 
+    # ==================== FUNGSI OTOMATISASI VISUAL SHEETS ====================
+    def perbarui_desain_visual_sheet(ws):
+        try:
+            # 1. Mengatur Lebar Kolom Otomatis (Auto-fit Columns)
+            # Kolom A-G (1 sampai 7). Kolom C adalah Deskripsi yang akan melebar otomatis.
+            ws.columns_auto_resize(1, 7)
+            
+            # 2. Desain Header & Efek Zebra Menggunakan Batch Formatting (Lebih Cepat)
+            total_baris = len(ws.get_all_values())
+            if total_baris == 0:
+                return
+
+            requests = []
+            
+            # Format Header (Baris 1): Latar Biru Tua, Teks Putih Tebal, Rata Tengah
+            requests.append({
+                "repeatCell": {
+                    "range": {"sheetId": ws.id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 7},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.1, "green": 0.4, "blue": 0.8}, # Warna Biru
+                            "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True},
+                            "horizontalAlignment": "CENTER"
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+                }
+            })
+            
+            # Format Efek Zebra untuk Baris Data (Baris 2 dan seterusnya)
+            for i in range(1, total_baris):
+                # Baris genap diberi warna biru muda transparan, baris ganjil tetap putih bersih
+                warna_latar = {"red": 0.92, "green": 0.96, "blue": 1.0} if i % 2 == 1 else {"red": 1.0, "green": 1.0, "blue": 1.0}
+                
+                requests.append({
+                    "repeatCell": {
+                        "range": {"sheetId": ws.id, "startRowIndex": i, "endRowIndex": i + 1, "startColumnIndex": 0, "endColumnIndex": 7},
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": warna_latar,
+                                "horizontalAlignment": "CENTER"
+                            }
+                        },
+                        "fields": "userEnteredFormat(backgroundColor,horizontalAlignment)"
+                    }
+                })
+            
+            # Tembakkan semua perubahan desain ke Google Sheets sekaligus
+            ws.spreadsheet.batch_update({"requests": requests})
+        except Exception:
+            pass # Mengabaikan jika terjadi kegagalan kosmetik agar aplikasi tidak macet
+
     KAMUS_HARI = {
         "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
         "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"
@@ -51,11 +103,8 @@ if cek_login():
 
     # Ambil Dokumen Spreadsheet Utama
     sh = dapatkan_koneksi_spreadsheet()
-    
-    # Ambil seluruh nama sheet (tab) yang tersedia untuk pilihan Dropdown
     daftar_sheet = [ws.title for ws in sh.worksheets()]
     
-    # Deteksi rekomendasi nama sheet baru berdasarkan waktu saat ini (Format: "Juli_2026")
     BULAN_INDO = {
         "January": "Januari", "February": "Februari", "March": "Maret", "April": "April",
         "May": "Mei", "June": "Juni", "July": "Juli", "August": "Agustus",
@@ -81,7 +130,6 @@ if cek_login():
         df_master = pd.DataFrame(semua_data)
         df_master = df_master[df_master["Tanggal"] != "Tanggal"]
 
-    # Cari Saldo Terakhir Global (Mencari dari sheet aktif saat ini)
     if not df_master.empty and "Saldo" in df_master.columns:
         df_master["Debit"] = pd.to_numeric(df_master["Debit"], errors='coerce').fillna(0).astype(int)
         df_master["Kredit"] = pd.to_numeric(df_master["Kredit"], errors='coerce').fillna(0).astype(int)
@@ -94,7 +142,6 @@ if cek_login():
         total_pengeluaran = 0
         total_pemasukan = 0
 
-    # Tampilan Ringkasan Berdasarkan Tab Terpilih
     st.metric(label=f"Sisa Saldo Kas di Tab ({sheet_aktif})", value=f"Rp {saldo_terakhir_aktif:,}")
     col_met1, col_met2 = st.columns(2)
     col_met1.metric(label="Total Keluar Tab Ini", value=f"Rp {total_pengeluaran:,}")
@@ -111,11 +158,8 @@ if cek_login():
                 st.warning(f"⚠️ Tab '{nama_baru}' sudah ada di Google Sheets Anda!")
             else:
                 try:
-                    # 1. Buat Sheet Baru di Google Sheets
                     ws_baru = sh.add_worksheet(title=nama_baru, rows="1000", cols="20")
-                    # 2. Tulis Header
                     ws_baru.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
-                    # 3. Tulis Baris Pertama bawaan sisa saldo terakhir dari tab sebelumnya
                     baris_awal = [
                         datetime.now().strftime("%Y-%m-%d"),
                         ambil_hari_ini(),
@@ -126,6 +170,10 @@ if cek_login():
                         int(saldo_terakhir_aktif)
                     ]
                     ws_baru.append_row(baris_awal)
+                    
+                    # Berikan sentuhan desain visual instan pada sheet baru
+                    perbarui_desain_visual_sheet(ws_baru)
+                    
                     st.success(f"🎉 Tab '{nama_baru}' berhasil dibuat dengan saldo awal Rp {saldo_terakhir_aktif:,}!")
                     st.rerun()
                 except Exception as e:
@@ -161,6 +209,10 @@ if cek_login():
                 
                 try:
                     ws_aktif.append_row(baris_data)
+                    
+                    # Jalankan dekorasi visual otomatis (Zebra effect + auto column width)
+                    perbarui_desain_visual_sheet(ws_aktif)
+                    
                     st.success(f"Berhasil disimpan ke Tab {sheet_aktif}!")
                     st.rerun()
                 except Exception as e:
@@ -168,12 +220,11 @@ if cek_login():
             else:
                 st.warning("⚠️ Mohon isi deskripsi dan nominal uang dengan benar!")
 
-    # ==================== TABEL DATA SINKRON (RATA TENGAH / AUTO-CENTER) ====================
+    # ==================== TABEL DATA SINKRON (STREAMLIT APP TAMPILAN) ====================
     if not df_master.empty:
         st.write("---")
         st.subheader(f"📊 Tabel Data Terkini - Tab {sheet_aktif}")
         
-        # Mengubah style seluruh kolom di dataframe agar teks dan angka menjadi RATA TENGAH (CENTER)
         df_tampil = df_master.copy()
         df_tampil["Debit"] = df_tampil["Debit"].apply(lambda x: f"Rp {x:,}")
         df_tampil["Kredit"] = df_tampil["Kredit"].apply(lambda x: f"Rp {x:,}")
@@ -212,13 +263,16 @@ if cek_login():
     st.write("---")
     st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
     
-    # Fitur Hapus Baris Terakhir pada Tab Terpilih
     if not df_master.empty:
         if st.button(f"⚠️ Hapus 1 Baris Transaksi Terakhir di Tab {sheet_aktif}", use_container_width=True):
             try:
                 total_baris_fisik = len(ws_aktif.get_all_values())
                 if total_baris_fisik > 1:
                     ws_aktif.delete_rows(total_baris_fisik)
+                    
+                    # Susun kembali format zebra setelah baris dihapus
+                    perbarui_desain_visual_sheet(ws_aktif)
+                    
                     st.success("Baris terakhir di tab ini berhasil dihapus!")
                     st.rerun()
                 else:
@@ -230,21 +284,21 @@ if cek_login():
     konfirmasi_reset = st.checkbox("Saya ingin MENGHAPUS SEMUA DATA dan SEMUA TAB BULANAN secara permanen")
     if st.button("🚨 WIPE OUT: HAPUS SEMUA DATA & SEMUA SHEET", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
         try:
-            # 1. Buat dulu satu sheet baru yang steril sebagai jangkar sementara
             sheet_sementara = f"Mulai_Baru_{rekomendasi_sheet_baru}"
             ws_baru = sh.add_worksheet(title=sheet_sementara, rows="1000", cols="20")
             ws_baru.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
             ws_baru.append_row([datetime.now().strftime("%Y-%m-%d"), ambil_hari_ini(), "Sistem Direset Total", "-", 0, 0, 0])
             
-            # 2. Hapus seluruh sheet lama yang menumpuk satu per satu
             for ws in sh.worksheets():
                 if ws.title != sheet_sementara:
                     sh.del_worksheet(ws)
             
-            # 3. Ubah nama sheet jangkar sementara tadi menjadi nama bulan bersih yang elegan
             ws_baru.update_title(rekomendasi_sheet_baru)
             
-            st.success("💥 BERHASIL! Semua tab lama dibuang total dan sistem kembali bersih dari nol!")
+            # Berikan desain visual biru zebra pada sheet hasil reset total
+            perbarui_desain_visual_sheet(ws_baru)
+            
+            st.success("💥 BERHASIL! Semua tab lama dibuang total dan sistem kembali bersih dari nol dengan desain baru!")
             st.rerun()
         except Exception as e:
             st.error(f"Gagal melakukan pembersihan total sheet: {e}")
