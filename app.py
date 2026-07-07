@@ -31,19 +31,28 @@ if cek_login():
     # Menggunakan gsheets bawaan untuk MEMBACA (karena ada fitur cache otomatis)
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Menghubungkan gspread secara manual untuk MENULIS (anti-eror)
+    # Fungsi koneksi yang sudah dilengkapi pembersih karakter eror otomatis
     def dapatkan_koneksi_gspread():
         # Mengambil data kredensial langsung dari Streamlit Secrets Anda
         kredensial_mentah = st.secrets["connections"]["gsheets"]["service_account"]
         spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         
-        # Memaksa teks string dari secrets dikonversi menjadi objek JSON murni (Anti-Eror 'str' object)
-        kredensial_json = json.loads(kredensial_mentah)
+        # --- PROSES PEMBERSIHAN KARAKTER (ANTI-INVALID CONTROL CHARACTER) ---
+        # Menghapus karakter spasi/enter aneh di ujung teks
+        kredensial_bersih = kredensial_mentah.strip()
+        # Mengganti baris patah tersembunyi agar aman dibaca oleh json.loads
+        kredensial_bersih = kredensial_bersih.replace('\n', '\\n').replace('\r', '\\r')
+        
+        # Coba konversi teks bersih ke objek JSON murni
+        try:
+            kredensial_json = json.loads(kredensial_bersih)
+        except json.JSONDecodeError:
+            # Jika cara pertama gagal karena masalah backslash pada private_key, gunakan cara alternatif ini
+            kredensial_json = json.loads(kredensial_mentah, strict=False)
         
         gc = gspread.service_account_from_dict(kredensial_json)
         sh = gc.open_by_url(spreadsheet_url)
         return sh.get_worksheet(0) # Mengambil sheet pertama (Sheet1)
-
     KAMUS_HARI = {
         "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
         "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"
