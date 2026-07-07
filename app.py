@@ -1,5 +1,6 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
+import gspread
 from datetime import datetime
 import pandas as pd
 import io
@@ -26,8 +27,19 @@ def cek_login():
 
 if cek_login():
     # ==================== KONEKSI GOOGLE SHEETS ====================
+    # Menggunakan gsheets bawaan untuk MEMBACA (karena ada fitur cache otomatis)
     conn = st.connection("gsheets", type=GSheetsConnection)
     
+    # Menghubungkan gspread secara manual untuk MENULIS (anti-eror)
+    def dapatkan_koneksi_gspread():
+        # Mengambil data kredensial langsung dari Streamlit Secrets Anda
+        kredensial = st.secrets["connections"]["gsheets"]["service_account"]
+        spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+        
+        gc = gspread.service_account_from_dict(kredensial)
+        sh = gc.open_by_url(spreadsheet_url)
+        return sh.get_worksheet(0) # Mengambil sheet pertama (Sheet1)
+
     KAMUS_HARI = {
         "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
         "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"
@@ -37,11 +49,10 @@ if cek_login():
         hari_inggris = datetime.now().strftime("%A")
         return KAMUS_HARI.get(hari_inggris, hari_inggris)
 
-    # Ambil Bulan & Tahun Saat Ini untuk Filter Tampilan (Format: "2026-07")
     bulan_aktif = datetime.now().strftime("%Y-%m")
     nama_bulan_ini = datetime.now().strftime("%B %Y")
 
-    # Membaca data dari Sheet Utama
+    # Membaca data dari Google Sheets
     try:
         df_master = conn.read(ttl="2s")
         if df_master.empty or "Saldo" not in df_master.columns:
@@ -65,7 +76,7 @@ if cek_login():
     st.caption(f"📅 Menampilkan Transaksi Bulan: **{nama_bulan_ini}**")
     st.write("---")
 
-    # Filter data khusus bulan ini saja untuk ditampilkan di layar
+    # Filter data khusus bulan ini saja untuk tampilan
     if not df_master.empty:
         df_bulan_ini = df_master[df_master["Tanggal"].str.startswith(bulan_aktif, na=False)]
         total_pengeluaran_bulan_ini = int(df_bulan_ini["Debit"].sum())
@@ -76,7 +87,7 @@ if cek_login():
         total_pemasukan_bulan_ini = 0
 
     # Tampilan Ringkasan Berdasarkan Saldo Kumulatif
-    st.metric(label="Sisa Saldo Kas Saat Ini (Estafet Toko)", value=f"Rp {saldo_global_terakhir:,}")
+    st.metric(label="Sisa Saldo Kas Saat Ini", value=f"Rp {saldo_global_terakhir:,}")
     
     col_met1, col_met2 = st.columns(2)
     col_met1.metric(label="Pengeluaran Bulan Ini", value=f"Rp {total_pengeluaran_bulan_ini:,}")
@@ -98,36 +109,39 @@ if cek_login():
                 debit = jumlah if "Debit" in tipe else 0
                 kredit = jumlah if "Kredit" in tipe else 0
                 
-                # Menghitung saldo estafet otomatis berdasarkan baris terakhir di Google Sheets
                 saldo_baru = (saldo_global_terakhir - debit) if debit > 0 else (saldo_global_terakhir + kredit)
                 
-                baris_baru = pd.DataFrame([{
-                    "Tanggal": datetime.now().strftime("%Y-%m-%d"),
-                    "Hari": ambil_hari_ini(),
-                    "Deskripsi": deskripsi,
-                    "Nota": status_nota,
-                    "Debit": int(debit),
-                    "Kredit": int(kredit),
-                    "Saldo": int(saldo_baru)
-                }])
+                # Baris baru yang akan ditambahkan ke Google Sheets
+                baris_data = [
+                    datetime.now().strftime("%Y-%m-%d"),
+                    ambil_hari_ini(),
+                    deskripsi,
+                    status_nota,
+                    int(debit),
+                    int(kredit),
+                    int(saldo_baru)
+                ]
                 
-                if df_master.empty:
-                    df_gabung = baris_baru
-                else:
-                    df_gabung = pd.concat([df_master, baris_baru], ignore_index=True)
+                try:
+                    sheet_target = dapatkan_koneksi_gspread()
+                    # Jika sheet kosong, tulis baris judul kolom terlebih dahulu
+                    if df_master.empty:
+                        sheet_target.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
                     
-                conn.update(data=df_gabung)
-                st.success("Berhasil disimpan ke Google Sheets!")
-                st.rerun()
+                    # Tambahkan baris baru ke paling bawah sheet menggunakan gspread
+                    sheet_target.append_row(baris_data)
+                    st.success("Berhasil disimpan ke Google Sheets via Gspread!")
+                    st.toast("Data Sinkron!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal menulis ke Google Sheets. Eror: {e}")
             else:
                 st.warning("⚠️ Mohon isi deskripsi dan nominal uang dengan benar!")
 
     # ==================== FITUR DOWNLOAD LAPORAN ====================
-    st.write("---")
-    st.subheader("📥 Fitur Download Laporan")
-    
-    # Memilih bulan yang ingin diekspor dari data yang ada
     if not df_master.empty:
+        st.write("---")
+        st.subheader("📥 Fitur Download Laporan")
         df_master["TahunBulan"] = df_master["Tanggal"].str.slice(0, 7)
         pilihan_bulan = df_master["TahunBulan"].unique().tolist()
         bulan_pilihan = st.selectbox("Pilih bulan laporan yang ingin diunduh:", options=pilihan_bulan)
@@ -146,25 +160,21 @@ if cek_login():
                 use_container_width=True
             )
 
-    # ==================== FITUR RESET & DELETE (ZONA UJI COBA) ====================
+    # ==================== FITUR RESET (ZONA UJI COBA) ====================
     if not df_master.empty:
         st.write("---")
         st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
         
-        if st.button("⚠️ Hapus Baris Transaksi Terakhir", use_container_width=True):
-            df_kurang = df_master.drop(df_master.index[-1])
-            conn.update(data=df_kurang)
-            st.success("Baris terakhir berhasil dihapus!")
-            st.rerun()
-            
-        st.write("")
-        konfirmasi_reset = st.checkbox("Saya ingin menghapus SELURUH DATA untuk memulai dari awal lagi")
+        konfirmasi_reset = st.checkbox("Saya ingin mengosongkan SELURUH DATA Google Sheets")
         if st.button("🚨 RESET TOTAL SEMUA DATA", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
-            kolom_kosong = ["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"]
-            df_kosong = pd.DataFrame(columns=kolom_kosong)
-            conn.update(data=df_kosong)
-            st.success("Sistem Berhasil Direset ke Nol! Semua riwayat uji coba dihapus.")
-            st.rerun()
+            try:
+                sheet_target = dapatkan_koneksi_gspread()
+                sheet_target.clear() # Menghapus total isi Google Sheets
+                sheet_target.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
+                st.success("Sistem Berhasil Direset ke Nol!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gagal melakukan reset: {e}")
 
         # Tampilkan Riwayat Transaksi khusus bulan aktif ini saja
         if not df_bulan_ini.empty:
