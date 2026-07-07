@@ -28,31 +28,26 @@ def cek_login():
 
 if cek_login():
     # ==================== KONEKSI GOOGLE SHEETS ====================
-    # Menggunakan gsheets bawaan untuk MEMBACA (karena ada fitur cache otomatis)
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Fungsi koneksi yang sudah dilengkapi pembersih karakter eror otomatis
     def dapatkan_koneksi_gspread():
-        # Mengambil data kredensial langsung dari Streamlit Secrets Anda
-        kredensial_mentah = st.secrets["connections"]["gsheets"]["service_account"]
-        spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        
-        # --- PROSES PEMBERSIHAN KARAKTER (ANTI-INVALID CONTROL CHARACTER) ---
-        # Menghapus karakter spasi/enter aneh di ujung teks
-        kredensial_bersih = kredensial_mentah.strip()
-        # Mengganti baris patah tersembunyi agar aman dibaca oleh json.loads
-        kredensial_bersih = kredensial_bersih.replace('\n', '\\n').replace('\r', '\\r')
-        
-        # Coba konversi teks bersih ke objek JSON murni
         try:
-            kredensial_json = json.loads(kredensial_bersih)
-        except json.JSONDecodeError:
-            # Jika cara pertama gagal karena masalah backslash pada private_key, gunakan cara alternatif ini
+            kredensial_mentah = st.secrets["connections"]["gsheets"]["service_account"]
+            spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+            
+            # Membaca JSON rahasia dengan mode fleksibel (mengabaikan karakter enter/control yang rusak)
             kredensial_json = json.loads(kredensial_mentah, strict=False)
-        
-        gc = gspread.service_account_from_dict(kredensial_json)
-        sh = gc.open_by_url(spreadsheet_url)
-        return sh.get_worksheet(0) # Mengambil sheet pertama (Sheet1)
+            
+            gc = gspread.service_account_from_dict(kredensial_json)
+            sh = gc.open_by_url(spreadsheet_url)
+            return sh.get_worksheet(0)
+        except gspread.exceptions.SpreadsheetNotFound:
+            st.error("❌ Eror 404: Link Google Sheets tidak ditemukan! Periksa kembali URL spreadsheet di Streamlit Secrets Anda.")
+            st.stop()
+        except Exception as e:
+            st.error(f"❌ Masalah Koneksi: {e}")
+            st.stop()
+
     KAMUS_HARI = {
         "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
         "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"
@@ -124,7 +119,6 @@ if cek_login():
                 
                 saldo_baru = (saldo_global_terakhir - debit) if debit > 0 else (saldo_global_terakhir + kredit)
                 
-                # Baris baru yang akan ditambahkan ke Google Sheets
                 baris_data = [
                     datetime.now().strftime("%Y-%m-%d"),
                     ambil_hari_ini(),
@@ -137,11 +131,9 @@ if cek_login():
                 
                 try:
                     sheet_target = dapatkan_koneksi_gspread()
-                    # Jika sheet kosong, tulis baris judul kolom terlebih dahulu
                     if df_master.empty:
                         sheet_target.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
                     
-                    # Tambahkan baris baru ke paling bawah sheet menggunakan gspread
                     sheet_target.append_row(baris_data)
                     st.success("Berhasil disimpan ke Google Sheets!")
                     st.toast("Data Tersinkronisasi!")
@@ -182,14 +174,13 @@ if cek_login():
         if st.button("🚨 RESET TOTAL SEMUA DATA", type="primary", use_container_width=True, disabled=not konfirmasi_reset):
             try:
                 sheet_target = dapatkan_koneksi_gspread()
-                sheet_target.clear() # Menghapus total isi Google Sheets
+                sheet_target.clear()
                 sheet_target.append_row(["Tanggal", "Hari", "Deskripsi", "Nota", "Debit", "Kredit", "Saldo"])
                 st.success("Sistem Berhasil Direset ke Nol!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Gagal melakukan reset: {e}")
 
-        # Tampilkan Riwayat Transaksi khusus bulan aktif ini saja
         if not df_bulan_ini.empty:
             st.write("---")
             st.subheader("📜 Riwayat Transaksi Bulan Ini")
