@@ -290,7 +290,7 @@ if cek_login():
 
     # ==================== FITUR RESET TOTAL (HAPUS DATA & HAPUS SHEET) ====================
     st.write("---")
-    st.subheader("⚙️ Zona Bahaya (Pembersihan Data)")
+    st.subheader("⚙️ RESET/HAPUS DATA")
     
     if not df_master.empty:
         if st.button(f"⚠️ Hapus 1 Baris Transaksi Terakhir di Tab {sheet_aktif}", use_container_width=True):
