@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 # --- KONFIGURASI HALAMAN WEB ---
-st.set_page_config(page_title="Office Cashbook Cloud", page_icon="📱", layout="centered")
+st.set_page_config(page_title="CASHBOOK-PRO_v1", page_icon="📱", layout="centered")
 
 # ==================== SISTEM KEAMANAN LOGIN ====================
 def cek_login():
